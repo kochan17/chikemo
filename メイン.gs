@@ -15,10 +15,6 @@ function onEdit(e) {
 
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   var row = e.range.getRow();
-
-  // 編集された行の運用列が空なら自動コピー
-  autoCopyColumns_(sheet, row, headers);
-
   var paymentCol = headers.indexOf('入金') + 1;
 
   // 入金列以外の編集は無視
@@ -27,33 +23,6 @@ function onEdit(e) {
 
   if (value === 'OK') sendShippingNotification_(sheet, row, headers);
   if (value === 'NG') sendCancellationNotification_(sheet, row, headers);
-}
-
-// ===== 新規行の自動コピー（onEdit内で呼び出し） =====
-function autoCopyColumns_(sheet, row, headers) {
-  var copyMap = [
-    { from: '商品お届け先名', to: '送付先名' },
-    { from: '商品お届け先住所', to: '送付先住所' },
-    { from: 'ご購入商品', to: 'ご購入商品' },
-    { from: '購入枚数', to: '購入枚数' },
-    { from: 'お名前（スペースなし）', to: 'お名前' },
-    { from: 'フリガナ（スペースなし）', to: 'フリガナ' },
-  ];
-
-  copyMap.forEach(function(pair) {
-    var fromCol = headers.indexOf(pair.from) + 1;
-    var toCols = [];
-    for (var i = 0; i < headers.length; i++) {
-      if (headers[i] === pair.to) toCols.push(i + 1);
-    }
-    var toCol = toCols.length > 1 ? toCols[1] : toCols[0];
-    if (fromCol > 0 && toCol > 0 && fromCol !== toCol) {
-      if (String(sheet.getRange(row, toCol).getValue()).trim() === '') {
-        var value = sheet.getRange(row, fromCol).getValue();
-        sheet.getRange(row, toCol).setValue(value);
-      }
-    }
-  });
 }
 
 // ===== 発送通知メール =====
@@ -224,47 +193,26 @@ function removeTrigger() {
   });
 }
 
-function backfillCopyColumns() {
+function setupArrayFormulas() {
   var sheet = SpreadsheetApp.getActive().getSheetByName('シート1');
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  var lastRow = sheet.getLastRow();
 
-  var copyMap = [
-    { from: '商品お届け先名', to: '送付先名' },
-    { from: '商品お届け先住所', to: '送付先住所' },
-    { from: 'ご購入商品', to: 'ご購入商品' },
-    { from: '購入枚数', to: '購入枚数' },
-    { from: 'お名前（スペースなし）', to: 'お名前' },
-    { from: 'フリガナ（スペースなし）', to: 'フリガナ' },
-  ];
+  // 既存の値をクリア（ヘッダーは残す）
+  var lastRow = sheet.getMaxRows();
+  var colsToClear = [18, 22, 23, 24, 25, 26, 27]; // R, V, W, X, Y, Z, AA
+  colsToClear.forEach(function(col) {
+    if (lastRow > 1) sheet.getRange(2, col, lastRow - 1).clearContent();
+  });
 
-  var resolved = copyMap.map(function(pair) {
-    var fromCol = headers.indexOf(pair.from) + 1;
-    var toCols = [];
-    for (var i = 0; i < headers.length; i++) {
-      if (headers[i] === pair.to) toCols.push(i + 1);
-    }
-    var toCol = toCols.length > 1 ? toCols[1] : toCols[0];
-    return { fromCol: fromCol, toCol: toCol };
-  }).filter(function(r) { return r.fromCol > 0 && r.toCol > 0 && r.fromCol !== r.toCol; });
+  // ARRAYFORMULA を2行目に設定
+  sheet.getRange('R2').setFormula('=ARRAYFORMULA(IF(H2:H="","",IF(AC2:AC<>"",AC2:AC,(H2:H*999)+2900)))');
+  sheet.getRange('V2').setFormula('=ARRAYFORMULA(IF(M2:M="","",M2:M))');
+  sheet.getRange('W2').setFormula('=ARRAYFORMULA(IF(N2:N="","",N2:N))');
+  sheet.getRange('X2').setFormula('=ARRAYFORMULA(IF(G2:G="","",G2:G))');
+  sheet.getRange('Y2').setFormula('=ARRAYFORMULA(IF(H2:H="","",H2:H))');
+  sheet.getRange('Z2').setFormula('=ARRAYFORMULA(IF(I2:I="","",I2:I))');
+  sheet.getRange('AA2').setFormula('=ARRAYFORMULA(IF(J2:J="","",J2:J))');
 
-  var filled = 0;
-  for (var row = 2; row <= lastRow; row++) {
-    var hasFormData = String(sheet.getRange(row, 1).getValue()).trim() !== '';
-    if (!hasFormData) continue;
-
-    var needsFill = resolved.some(function(r) {
-      return String(sheet.getRange(row, r.toCol).getValue()).trim() === '';
-    });
-    if (!needsFill) continue;
-
-    resolved.forEach(function(r) {
-      var value = sheet.getRange(row, r.fromCol).getValue();
-      sheet.getRange(row, r.toCol).setValue(value);
-    });
-    filled++;
-  }
-  Logger.log('バックフィル完了: ' + filled + '行処理');
+  Logger.log('ARRAYFORMULA 設定完了');
 }
 
 function setupPaymentDropdown() {
