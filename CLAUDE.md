@@ -18,7 +18,8 @@ clasp pull           # GAS → ローカルに取得
 
 ## Non-Obvious Constraints
 
-- **onEdit はシート1（半角）のみ**に限定。他シートでの編集は無視される。
+- **編集トリガーは `handleEdit`（`onEdit` 不可）**。`onEdit` という名前は GAS の simple trigger として自動発火し、`AuthMode.LIMITED` で `GmailApp` が権限エラーを投げるため、installable trigger と二重発火して「送信済み → エラー」の状態上書きが発生する。
+- **handleEdit はシート1（半角）のみ**に限定。他シートでの編集は無視される。
 - **データ投入元は LINE エルメ**（Google Forms ではない）。`onFormSubmit` は使えない。
 - **メール送信**: GmailApp → クォータ超過時に Resend API へ自動フォールバック。Resend API キーは GAS Script Properties `RESEND_API_KEY` に格納。送信ドメイン: `chikemo.net`。
 - **運用列の自動転記**: R, V〜AA 列はスプレッドシートの ARRAYFORMULA で処理（GAS ではない）。`setupArrayFormulas()` で設定。

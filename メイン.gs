@@ -7,7 +7,9 @@ var CONFIG = {
 };
 
 // ===== メイン処理：入金列が変更されたら自動でメール送信 =====
-function onEdit(e) {
+// NOTE: 関数名を onEdit にすると simple trigger として自動発火し、
+// AuthMode.LIMITED で GmailApp が権限エラーになるため handleEdit にしている。
+function handleEdit(e) {
   if (!e || !e.range || e.range.getRow() <= 1) return;
 
   var sheet = e.range.getSheet();
@@ -180,7 +182,7 @@ function setCell_(sheet, row, headers, name, value) {
 // ===== トリガー管理 =====
 function setupTrigger() {
   removeTrigger();
-  ScriptApp.newTrigger('onEdit')
+  ScriptApp.newTrigger('handleEdit')
     .forSpreadsheet(SpreadsheetApp.getActive())
     .onEdit()
     .create();
