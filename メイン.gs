@@ -246,6 +246,36 @@ function setupPaymentDropdown() {
   Logger.log('入金列（' + col + '列目）にプルダウン設定完了');
 }
 
+// 入金=OK かつ 発送通知済みが空白の行を一括再送する緊急リカバリ関数。
+// トリガー失敗/無言スキップが疑われる時にエディタから手動実行する。
+// sendShippingNotification_ 側で既送信行は自動スキップされるので二重送信にならない。
+function reprocessUnsent() {
+  var sheet = SpreadsheetApp.getActive().getSheetByName('シート1');
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('対象行なし'); return; }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var paymentCol = headers.indexOf('入金') + 1;
+  var statusCol = headers.indexOf('発送通知済み') + 1;
+  if (paymentCol === 0 || statusCol === 0) {
+    Logger.log('入金 or 発送通知済み 列が見つかりません');
+    return;
+  }
+
+  var payments = sheet.getRange(2, paymentCol, lastRow - 1, 1).getValues();
+  var statuses = sheet.getRange(2, statusCol, lastRow - 1, 1).getValues();
+  var processed = 0;
+
+  for (var i = 0; i < payments.length; i++) {
+    if (String(payments[i][0]).trim() === 'OK' && String(statuses[i][0]).trim() === '') {
+      sendShippingNotification_(sheet, 2 + i, headers);
+      processed++;
+    }
+  }
+
+  Logger.log('reprocessUnsent 完了: ' + processed + ' 件処理');
+}
+
 function testResend() {
   sendViaResend_(
     CONFIG.contactEmail,
