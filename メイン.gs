@@ -10,21 +10,35 @@ var CONFIG = {
 // NOTE: 関数名を onEdit にすると simple trigger として自動発火し、
 // AuthMode.LIMITED で GmailApp が権限エラーになるため handleEdit にしている。
 function handleEdit(e) {
-  if (!e || !e.range || e.range.getRow() <= 1) return;
+  try {
+    if (!e || !e.range || e.range.getRow() <= 1) return;
 
-  var sheet = e.range.getSheet();
-  if (sheet.getName() !== 'シート1') return;
+    var sheet = e.range.getSheet();
+    if (sheet.getName() !== 'シート1') return;
 
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  var row = e.range.getRow();
-  var paymentCol = headers.indexOf('入金') + 1;
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var row = e.range.getRow();
+    var paymentCol = headers.indexOf('入金') + 1;
 
-  // 入金列以外の編集は無視
-  if (paymentCol === 0 || e.range.getColumn() !== paymentCol) return;
-  var value = String(e.range.getValue()).trim();
+    // 入金列以外の編集は無視
+    if (paymentCol === 0 || e.range.getColumn() !== paymentCol) return;
+    var value = String(e.range.getValue()).trim();
 
-  if (value === 'OK') sendShippingNotification_(sheet, row, headers);
-  if (value === 'NG') sendCancellationNotification_(sheet, row, headers);
+    // コピペ等で複数行同時編集された場合、先頭行のみ処理し残り行に警告を書く
+    if (e.range.getNumRows() > 1 && (value === 'OK' || value === 'NG')) {
+      var prefix = value === 'OK' ? '発送通知' : 'キャンセル通知';
+      for (var r = row + 1; r <= e.range.getLastRow(); r++) {
+        setCell_(sheet, r, headers, prefix + 'エラー',
+          '複数行まとめて ' + value + ' が入力されました。この行は未処理です。個別に OK を入れ直してください');
+      }
+    }
+
+    if (value === 'OK') sendShippingNotification_(sheet, row, headers);
+    if (value === 'NG') sendCancellationNotification_(sheet, row, headers);
+  } catch (err) {
+    console.error('handleEdit failed:', err, 'row=', e && e.range && e.range.getRow());
+    throw err;
+  }
 }
 
 // ===== 発送通知メール =====
@@ -107,23 +121,23 @@ function sendEmail_(sheet, row, headers, type, to, subject, body) {
       replyTo: CONFIG.contactEmail,
     });
     setCell_(sheet, row, headers, type + '済み', '送信済み');
-    setCell_(sheet, row, headers, type + '日時', new Date());
+    setCell_(sheet, row, headers, type + '日時', Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'));
     setCell_(sheet, row, headers, type + 'エラー', '');
   } catch (gmailErr) {
     if (isQuotaError_(gmailErr)) {
       try {
         sendViaResend_(to, subject, body);
         setCell_(sheet, row, headers, type + '済み', '送信済み');
-        setCell_(sheet, row, headers, type + '日時', new Date());
+        setCell_(sheet, row, headers, type + '日時', Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'));
         setCell_(sheet, row, headers, type + 'エラー', '');
       } catch (resendErr) {
         setCell_(sheet, row, headers, type + '済み', 'エラー');
-        setCell_(sheet, row, headers, type + '日時', new Date());
+        setCell_(sheet, row, headers, type + '日時', Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'));
         setCell_(sheet, row, headers, type + 'エラー', 'Resend fallback失敗: ' + String(resendErr));
       }
     } else {
       setCell_(sheet, row, headers, type + '済み', 'エラー');
-      setCell_(sheet, row, headers, type + '日時', new Date());
+      setCell_(sheet, row, headers, type + '日時', Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'));
       setCell_(sheet, row, headers, type + 'エラー', String(gmailErr));
     }
   }
@@ -164,7 +178,7 @@ function sendViaResend_(to, subject, body) {
 
 function setError_(sheet, row, headers, type, message) {
   setCell_(sheet, row, headers, type + '済み', 'エラー');
-  setCell_(sheet, row, headers, type + '日時', new Date());
+  setCell_(sheet, row, headers, type + '日時', Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss'));
   setCell_(sheet, row, headers, type + 'エラー', message);
 }
 
