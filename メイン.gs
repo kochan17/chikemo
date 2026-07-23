@@ -6,6 +6,17 @@ var CONFIG = {
   shippingMethod: '日本郵便 レターパックライト',
 };
 
+var COLUMN_FALLBACKS = {
+  '入金': 19, // S列
+  '発送通知済み': 30, // AD列
+  '発送通知日時': 31, // AE列
+  '発送通知エラー': 32, // AF列
+  'キャンセル通知済み': 33, // AG列
+  'キャンセル通知日時': 34, // AH列
+  'キャンセル通知エラー': 35, // AI列
+  '処理監視': 36, // AJ列
+};
+
 // ===== メイン処理：入金列が変更されたら自動でメール送信 =====
 // NOTE: 関数名を onEdit にすると simple trigger として自動発火し、
 // AuthMode.LIMITED で GmailApp が権限エラーになるため handleEdit にしている。
@@ -18,7 +29,7 @@ function handleEdit(e) {
 
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     var row = e.range.getRow();
-    var paymentCol = headers.indexOf('入金') + 1;
+    var paymentCol = findColumn_(headers, '入金');
 
     // 入金列以外の編集は無視
     if (paymentCol === 0 || e.range.getColumn() !== paymentCol) return;
@@ -50,7 +61,8 @@ function sendShippingNotification_(sheet, row, headers) {
   if (!email) return setError_(sheet, row, headers, '発送通知', 'メールアドレスが空');
   if (!tracking) return setError_(sheet, row, headers, '発送通知', '追跡番号が空');
 
-  var name = getCell_(sheet, row, headers, 'システム表示名');
+  var name = getRecipientName_(sheet, row, headers);
+  if (!name) return setError_(sheet, row, headers, '発送通知', '宛名が空（システム表示名 / お名前（スペースなし） / お名前 / 商品お届け先名）');
   var item = getCell_(sheet, row, headers, 'ご購入商品');
   var qty = getCell_(sheet, row, headers, '購入枚数');
   var toName = getCell_(sheet, row, headers, '商品お届け先名');
@@ -89,7 +101,8 @@ function sendCancellationNotification_(sheet, row, headers) {
   var email = getCell_(sheet, row, headers, 'メールアドレス');
   if (!email) return setError_(sheet, row, headers, 'キャンセル通知', 'メールアドレスが空');
 
-  var name = getCell_(sheet, row, headers, 'システム表示名');
+  var name = getRecipientName_(sheet, row, headers);
+  if (!name) return setError_(sheet, row, headers, 'キャンセル通知', '宛名が空（システム表示名 / お名前（スペースなし） / お名前 / 商品お届け先名）');
   var item = getCell_(sheet, row, headers, 'ご購入商品');
   var qty = getCell_(sheet, row, headers, '購入枚数');
   var toName = getCell_(sheet, row, headers, '商品お届け先名');
@@ -183,14 +196,62 @@ function setError_(sheet, row, headers, type, message) {
 }
 
 // ===== セル読み書き =====
+function getRecipientName_(sheet, row, headers) {
+  return getCell_(sheet, row, headers, 'システム表示名')
+    || getCell_(sheet, row, headers, 'お名前（スペースなし）')
+    || getCell_(sheet, row, headers, 'お名前')
+    || getCell_(sheet, row, headers, '商品お届け先名');
+}
+
 function getCell_(sheet, row, headers, name) {
-  var col = headers.indexOf(name) + 1;
+  var col = findColumn_(headers, name);
   return col > 0 ? String(sheet.getRange(row, col).getValue()).trim() : '';
 }
 
 function setCell_(sheet, row, headers, name, value) {
-  var col = headers.indexOf(name) + 1;
-  if (col > 0) sheet.getRange(row, col).setValue(value);
+  var col = findColumn_(headers, name);
+  if (col > 0) {
+    sheet.getRange(row, col).setValue(value);
+  } else {
+    console.warn('列が見つからないため書き込みをスキップ:', name, 'row=', row);
+  }
+}
+
+function findColumn_(headers, name) {
+  var normalizedName = normalizeHeader_(name);
+
+  for (var i = 0; i < headers.length; i++) {
+    if (normalizeHeader_(headers[i]) === normalizedName) return i + 1;
+  }
+
+  var aliases = getHeaderAliases_(name);
+  for (var a = 0; a < aliases.length; a++) {
+    var normalizedAlias = normalizeHeader_(aliases[a]);
+    for (var j = 0; j < headers.length; j++) {
+      if (normalizeHeader_(headers[j]) === normalizedAlias) return j + 1;
+    }
+  }
+
+  return COLUMN_FALLBACKS[name] || 0;
+}
+
+function normalizeHeader_(value) {
+  return String(value)
+    .replace(/[ 　\t\r\n]/g, '')
+    .trim();
+}
+
+function getHeaderAliases_(name) {
+  var aliases = {
+    '入金': ['入金確認', '入金ステータス'],
+    '発送通知済み': ['発送通知済', '発送通知送信済み', '発送通知ステータス'],
+    '発送通知日時': ['発送通知日', '発送通知送信日時'],
+    '発送通知エラー': ['発送通知エラー内容'],
+    'キャンセル通知済み': ['キャンセル通知済', 'キャンセル通知送信済み', 'キャンセル通知ステータス'],
+    'キャンセル通知日時': ['キャンセル通知日', 'キャンセル通知送信日時'],
+    'キャンセル通知エラー': ['キャンセル通知エラー内容'],
+  };
+  return aliases[name] || [];
 }
 
 // ===== トリガー管理 =====
@@ -201,6 +262,13 @@ function setupTrigger() {
     .onEdit()
     .create();
   Logger.log('トリガー設定完了');
+}
+
+function setupAutomation() {
+  setupTrigger();
+  setupPaymentDropdown();
+  setupMonitoringFormula();
+  Logger.log('自動処理セットアップ完了');
 }
 
 function removeTrigger() {
@@ -234,7 +302,7 @@ function setupArrayFormulas() {
 function setupPaymentDropdown() {
   var sheet = SpreadsheetApp.getActive().getSheetByName('シート1');
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  var col = headers.indexOf('入金') + 1;
+  var col = findColumn_(headers, '入金');
   if (col === 0) { Logger.log('入金列が見つかりません'); return; }
 
   var range = sheet.getRange(2, col, sheet.getMaxRows() - 1);
@@ -246,7 +314,25 @@ function setupPaymentDropdown() {
   Logger.log('入金列（' + col + '列目）にプルダウン設定完了');
 }
 
-// 入金=OK かつ 発送通知済みが空白の行を一括再送する緊急リカバリ関数。
+function setupMonitoringFormula() {
+  var sheet = SpreadsheetApp.getActive().getSheetByName('シート1');
+  var lastRow = sheet.getMaxRows();
+
+  sheet.getRange('AJ1').setValue('処理監視');
+  if (lastRow > 1) sheet.getRange(2, 36, lastRow - 1).clearContent();
+
+  sheet.getRange('AJ2').setFormula(
+    '=ARRAYFORMULA(IF(S2:S="","",' +
+      'IF((S2:S="OK")*(AD2:AD="エラー"),"要確認：発送通知エラー",' +
+        'IF((S2:S="OK")*(AD2:AD<>"送信済み"),"要確認：GASのsetupTrigger関数を実行して権限を承認してください（発送通知未完了）",' +
+          'IF((S2:S="NG")*(AG2:AG="エラー"),"要確認：キャンセル通知エラー",' +
+            'IF((S2:S="NG")*(AG2:AG<>"送信済み"),"要確認：GASのsetupTrigger関数を実行して権限を承認してください（キャンセル通知未完了）",""))))))'
+  );
+
+  Logger.log('処理監視列（AJ列）に ARRAYFORMULA 設定完了');
+}
+
+// 入金=OK かつ 発送通知済みが「送信済み」以外の行を一括再送する緊急リカバリ関数。
 // トリガー失敗/無言スキップが疑われる時にエディタから手動実行する。
 // sendShippingNotification_ 側で既送信行は自動スキップされるので二重送信にならない。
 function reprocessUnsent() {
@@ -255,8 +341,8 @@ function reprocessUnsent() {
   if (lastRow < 2) { Logger.log('対象行なし'); return; }
 
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  var paymentCol = headers.indexOf('入金') + 1;
-  var statusCol = headers.indexOf('発送通知済み') + 1;
+  var paymentCol = findColumn_(headers, '入金');
+  var statusCol = findColumn_(headers, '発送通知済み');
   if (paymentCol === 0 || statusCol === 0) {
     Logger.log('入金 or 発送通知済み 列が見つかりません');
     return;
@@ -267,7 +353,9 @@ function reprocessUnsent() {
   var processed = 0;
 
   for (var i = 0; i < payments.length; i++) {
-    if (String(payments[i][0]).trim() === 'OK' && String(statuses[i][0]).trim() === '') {
+    var payment = String(payments[i][0]).trim();
+    var status = String(statuses[i][0]).trim();
+    if (payment === 'OK' && status !== '送信済み') {
       sendShippingNotification_(sheet, 2 + i, headers);
       processed++;
     }
